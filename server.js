@@ -12,13 +12,17 @@ const PORT = process.env.PORT || 3001
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:5174', 'http://localhost:3000'],
+  origin: [
+    'http://localhost:5174',
+    'http://localhost:3000',
+    process.env.FRONTEND_URL // Ex.: https://meu-frontend.onrender.com
+  ],
   credentials: true
 }))
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 
-// Servir arquivos estáticos (uploads)
+// Servir arquivos estáticos (uploads) ⚠️ Não persiste no Render free
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 
 // Inicializar banco de dados
@@ -40,9 +44,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Algo deu errado!' })
 })
 
-// Iniciar servidor
+// Iniciar servidor (Render precisa de 0.0.0.0)
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor rodando na porta ${PORT}`)
-  console.log(`Acesse: http://localhost:${PORT}`)
 })
-
