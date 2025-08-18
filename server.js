@@ -11,14 +11,16 @@ const app = express()
 const PORT = process.env.PORT || 3001
 
 // Middleware
+const allowedOrigins = [
+  'http://localhost:5174',
+  'http://localhost:3000',
+  process.env.FRONTEND_URL
+].filter(Boolean); // remove undefined
+
 app.use(cors({
-  origin: [
-    'http://localhost:5174',
-    'http://localhost:3000',
-    process.env.FRONTEND_URL // Ex.: https://meu-frontend.onrender.com
-  ],
+  origin: allowedOrigins,
   credentials: true
-}))
+}));
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 
