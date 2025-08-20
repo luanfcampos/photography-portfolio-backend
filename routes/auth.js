@@ -22,32 +22,59 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// ✅ Login com JWT real
+// ✅ Login com JWT real + DEBUG
 router.post('/login', async (req, res) => {
+  console.log('🔄 Rota /login chamada'); // DEBUG
+  console.log('📨 Dados recebidos:', req.body); // DEBUG
+  
   try {
     const { username, password } = req.body;
 
+    // Validação básica
     if (!username || !password) {
+      console.log('❌ Dados faltando:', { username: !!username, password: !!password }); // DEBUG
       return res.status(400).json({ error: 'Usuário e senha são obrigatórios' });
     }
 
-    const db = getDatabase();
-    
+    console.log('🔐 JWT_SECRET definido:', !!process.env.JWT_SECRET); // DEBUG
+
+    // Verificar conexão com banco
+    let db;
     try {
+      db = getDatabase();
+      console.log('✅ Conexão com banco obtida'); // DEBUG
+    } catch (dbConnectionError) {
+      console.error('❌ Erro ao conectar com banco:', dbConnectionError); // DEBUG
+      return res.status(500).json({ error: 'Erro de conexão com banco de dados' });
+    }
+
+    try {
+      console.log('🔍 Buscando usuário:', username); // DEBUG
+      
       // Buscar usuário no banco - PostgreSQL usa $1, $2 para parâmetros
       const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
+      console.log('📊 Resultado da consulta:', { rowCount: result.rows.length }); // DEBUG
+      
       const user = result.rows[0];
 
       if (!user) {
+        console.log('❌ Usuário não encontrado'); // DEBUG
         return res.status(401).json({ error: 'Credenciais inválidas' });
       }
 
+      console.log('✅ Usuário encontrado, verificando senha...'); // DEBUG
+      
       // Verificar senha
       const validPassword = await bcrypt.compare(password, user.password);
+      console.log('🔑 Senha válida:', validPassword); // DEBUG
+      
       if (!validPassword) {
+        console.log('❌ Senha inválida'); // DEBUG
         return res.status(401).json({ error: 'Credenciais inválidas' });
       }
 
+      console.log('🎫 Gerando token JWT...'); // DEBUG
+      
       // Gerar JWT real
       const token = jwt.sign(
         { 
@@ -59,7 +86,10 @@ router.post('/login', async (req, res) => {
         { expiresIn: '7d' } // Token expira em 7 dias
       );
 
-      res.json({
+      console.log('✅ Token gerado com sucesso'); // DEBUG
+      console.log('📤 Enviando resposta de sucesso'); // DEBUG
+
+      const response = {
         success: true,
         token,
         user: {
@@ -67,14 +97,20 @@ router.post('/login', async (req, res) => {
           username: user.username,
           email: user.email
         }
-      });
+      };
+
+      console.log('📋 Resposta final:', { ...response, token: 'TOKEN_HIDDEN' }); // DEBUG
+      
+      return res.json(response);
+      
     } catch (dbError) {
-      console.error('Erro ao buscar usuário:', dbError);
-      return res.status(500).json({ error: 'Erro interno do servidor' });
+      console.error('❌ Erro na consulta do banco:', dbError); // DEBUG
+      return res.status(500).json({ error: 'Erro interno do servidor - banco' });
     }
+    
   } catch (error) {
-    console.error('Erro no login:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
+    console.error('❌ Erro geral no login:', error); // DEBUG
+    return res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });
 
