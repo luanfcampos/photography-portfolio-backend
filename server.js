@@ -40,20 +40,7 @@ if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && proce
 }
 
 // Middleware CORS para produção no Render
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:5174', 
-  'http://localhost:3000',
-  'https://luanferreira.onrender.com',
-  process.env.FRONTEND_URL
-].filter(Boolean);
-
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Cache-Control"]
-}));
+app.use(cors());
 
 // Middleware essenciais
 app.use(express.json({ limit: '10mb' }));
