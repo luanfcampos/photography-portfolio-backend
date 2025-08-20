@@ -33,12 +33,10 @@ router.post('/login', async (req, res) => {
 
     const db = getDatabase();
     
-    // Buscar usuário no banco
-    db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
-      if (err) {
-        console.error('Erro ao buscar usuário:', err);
-        return res.status(500).json({ error: 'Erro interno do servidor' });
-      }
+    try {
+      // Buscar usuário no banco - PostgreSQL usa $1, $2 para parâmetros
+      const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
+      const user = result.rows[0];
 
       if (!user) {
         return res.status(401).json({ error: 'Credenciais inválidas' });
@@ -70,7 +68,10 @@ router.post('/login', async (req, res) => {
           email: user.email
         }
       });
-    });
+    } catch (dbError) {
+      console.error('Erro ao buscar usuário:', dbError);
+      return res.status(500).json({ error: 'Erro interno do servidor' });
+    }
   } catch (error) {
     console.error('Erro no login:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
@@ -93,9 +94,12 @@ router.put('/change-password', authenticateToken, async (req, res) => {
     const db = getDatabase();
     const userId = req.user.id;
 
-    // Buscar usuário atual
-    db.get('SELECT * FROM users WHERE id = ?', [userId], async (err, user) => {
-      if (err || !user) {
+    try {
+      // Buscar usuário atual
+      const result = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+      const user = result.rows[0];
+
+      if (!user) {
         return res.status(500).json({ error: 'Erro ao buscar usuário' });
       }
 
@@ -110,18 +114,16 @@ router.put('/change-password', authenticateToken, async (req, res) => {
       const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
 
       // Atualizar senha no banco
-      db.run('UPDATE users SET password = ? WHERE id = ?', [hashedNewPassword, userId], (err) => {
-        if (err) {
-          console.error('Erro ao atualizar senha:', err);
-          return res.status(500).json({ error: 'Erro ao atualizar senha' });
-        }
+      await db.query('UPDATE users SET password = $1 WHERE id = $2', [hashedNewPassword, userId]);
 
-        res.json({ 
-          success: true, 
-          message: 'Senha alterada com sucesso' 
-        });
+      res.json({ 
+        success: true, 
+        message: 'Senha alterada com sucesso' 
       });
-    });
+    } catch (dbError) {
+      console.error('Erro ao atualizar senha:', dbError);
+      return res.status(500).json({ error: 'Erro ao atualizar senha' });
+    }
   } catch (error) {
     console.error('Erro ao alterar senha:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
@@ -129,7 +131,7 @@ router.put('/change-password', authenticateToken, async (req, res) => {
 });
 
 // ✅ Alterar dados do perfil
-router.put('/profile', authenticateToken, (req, res) => {
+router.put('/profile', authenticateToken, async (req, res) => {
   try {
     const { username, email } = req.body;
     const userId = req.user.id;
@@ -140,30 +142,27 @@ router.put('/profile', authenticateToken, (req, res) => {
 
     const db = getDatabase();
     
-    // Verificar se username já existe (para outro usuário)
-    db.get('SELECT id FROM users WHERE username = ? AND id != ?', [username, userId], (err, existingUser) => {
-      if (err) {
-        return res.status(500).json({ error: 'Erro ao verificar usuário' });
-      }
+    try {
+      // Verificar se username já existe (para outro usuário)
+      const existingResult = await db.query('SELECT id FROM users WHERE username = $1 AND id != $2', [username, userId]);
+      const existingUser = existingResult.rows[0];
 
       if (existingUser) {
         return res.status(400).json({ error: 'Nome de usuário já está em uso' });
       }
 
       // Atualizar dados
-      db.run('UPDATE users SET username = ?, email = ? WHERE id = ?', [username, email, userId], (err) => {
-        if (err) {
-          console.error('Erro ao atualizar perfil:', err);
-          return res.status(500).json({ error: 'Erro ao atualizar perfil' });
-        }
+      await db.query('UPDATE users SET username = $1, email = $2 WHERE id = $3', [username, email, userId]);
 
-        res.json({ 
-          success: true, 
-          message: 'Perfil atualizado com sucesso',
-          user: { username, email }
-        });
+      res.json({ 
+        success: true, 
+        message: 'Perfil atualizado com sucesso',
+        user: { username, email }
       });
-    });
+    } catch (dbError) {
+      console.error('Erro ao atualizar perfil:', dbError);
+      return res.status(500).json({ error: 'Erro ao atualizar perfil' });
+    }
   } catch (error) {
     console.error('Erro ao atualizar perfil:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });

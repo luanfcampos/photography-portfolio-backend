@@ -2,7 +2,8 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const { router: authRoutes, authenticateToken } = require('./routes/auth');
-const { initDatabase, getDatabase } = require('./database/init');
+// ✅ MUDANÇA: Importar PostgreSQL em vez de SQLite
+const { initPostgreSQL, getDatabase } = require('./database/postgres');
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
 const streamifier = require('streamifier');
@@ -10,9 +11,15 @@ const streamifier = require('streamifier');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ✅ Verificar se JWT_SECRET existe
+// ✅ Verificar variáveis de ambiente essenciais
 if (!process.env.JWT_SECRET) {
   console.error('❌ ERRO: JWT_SECRET não configurado no .env!');
+  process.exit(1);
+}
+
+if (!process.env.DATABASE_URL) {
+  console.error('❌ ERRO: DATABASE_URL não configurado!');
+  console.log('Configure a connection string do PostgreSQL do Render');
   process.exit(1);
 }
 
@@ -41,8 +48,15 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Inicializar banco de dados
-initDatabase();
+// ✅ MUDANÇA: Inicializar PostgreSQL
+const initializeDatabase = async () => {
+  try {
+    await initPostgreSQL();
+  } catch (err) {
+    console.error('❌ Falha ao inicializar banco:', err);
+    process.exit(1);
+  }
+};
 
 // Configuração Multer
 const storage = multer.memoryStorage();
@@ -61,10 +75,11 @@ const upload = multer({
   }
 });
 
-// 🔓 PÚBLICO - GET /api/photos (para o portfólio público)
+// 🔓 PÚBLICO - GET /api/photos
 app.get('/api/photos', (req, res) => {
   const db = getDatabase();
   
+  // ✅ MUDANÇA: Ajustar query para PostgreSQL
   const query = `
     SELECT 
       p.*,
@@ -90,7 +105,7 @@ app.get('/api/photos', (req, res) => {
   });
 });
 
-// 🔐 PROTEGIDO - POST /api/photos (apenas admin pode fazer upload)
+// 🔐 PROTEGIDO - POST /api/photos
 app.post('/api/photos', authenticateToken, upload.single('photo'), async (req, res) => {
   try {
     const file = req.file;
@@ -105,8 +120,8 @@ app.post('/api/photos', authenticateToken, upload.single('photo'), async (req, r
           folder: 'meu-portfolio',
           resource_type: 'auto',
           transformation: [
-            { width: 1920, height: 1080, crop: 'limit' }, // Redimensionar se muito grande
-            { quality: 'auto' } // Otimizar qualidade
+            { width: 1920, height: 1080, crop: 'limit' },
+            { quality: 'auto' }
           ]
         },
         (error, result) => {
@@ -121,6 +136,7 @@ app.post('/api/photos', authenticateToken, upload.single('photo'), async (req, r
     const db = getDatabase();
     const { title, description, category_id, is_featured } = req.body;
     
+    // ✅ MUDANÇA: Query PostgreSQL com RETURNING
     const insertQuery = `
       INSERT INTO photos (
         title, 
@@ -129,7 +145,8 @@ app.post('/api/photos', authenticateToken, upload.single('photo'), async (req, r
         original_name, 
         category_id, 
         is_featured
-      ) VALUES (?, ?, ?, ?, ?, ?)
+      ) VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id
     `;
     
     const values = [
@@ -138,7 +155,7 @@ app.post('/api/photos', authenticateToken, upload.single('photo'), async (req, r
       cloudinaryResult.secure_url,
       file.originalname,
       category_id || null,
-      is_featured === 'true' || is_featured === true ? 1 : 0
+      is_featured === 'true' || is_featured === true
     ];
     
     db.run(insertQuery, values, function(err) {
@@ -168,17 +185,18 @@ app.put('/api/photos/:id', authenticateToken, (req, res) => {
   const { id } = req.params;
   const { title, description, category_id, is_featured } = req.body;
   
+  // ✅ MUDANÇA: Usar $1, $2... em vez de ?
   const updateQuery = `
     UPDATE photos 
-    SET title = ?, description = ?, category_id = ?, is_featured = ?
-    WHERE id = ?
+    SET title = $1, description = $2, category_id = $3, is_featured = $4
+    WHERE id = $5
   `;
   
   const values = [
     title,
     description,
     category_id || null,
-    is_featured ? 1 : 0,
+    is_featured ? true : false,
     id
   ];
   
@@ -201,7 +219,8 @@ app.delete('/api/photos/:id', authenticateToken, (req, res) => {
   const db = getDatabase();
   const { id } = req.params;
   
-  db.get('SELECT filename FROM photos WHERE id = ?', [id], async (err, photo) => {
+  // ✅ MUDANÇA: Usar $1 em vez de ?
+  db.get('SELECT filename FROM photos WHERE id = $1', [id], async (err, photo) => {
     if (err) {
       console.error('Erro ao buscar foto:', err);
       return res.status(500).json({ error: 'Erro ao buscar foto' });
@@ -219,7 +238,7 @@ app.delete('/api/photos/:id', authenticateToken, (req, res) => {
       }
       
       // Deletar do banco
-      db.run('DELETE FROM photos WHERE id = ?', [id], function(err) {
+      db.run('DELETE FROM photos WHERE id = $1', [id], function(err) {
         if (err) {
           console.error('Erro ao deletar foto:', err);
           return res.status(500).json({ error: 'Erro ao deletar foto' });
@@ -231,7 +250,7 @@ app.delete('/api/photos/:id', authenticateToken, (req, res) => {
     } catch (cloudinaryErr) {
       console.error('Erro ao deletar do Cloudinary:', cloudinaryErr);
       // Deletar do banco mesmo se falhar no Cloudinary
-      db.run('DELETE FROM photos WHERE id = ?', [id], function(err) {
+      db.run('DELETE FROM photos WHERE id = $1', [id], function(err) {
         if (err) {
           return res.status(500).json({ error: 'Erro ao deletar foto' });
         }
@@ -263,6 +282,7 @@ app.get('/api/health', (req, res) => {
     message: 'Backend funcionando!',
     timestamp: new Date().toISOString(),
     jwt_configured: !!process.env.JWT_SECRET,
+    database_configured: !!process.env.DATABASE_URL,
     cors: allowedOrigins
   });
 });
@@ -272,6 +292,7 @@ app.get('/', (req, res) => {
   res.json({
     message: 'Photography API',
     status: 'online',
+    database: 'PostgreSQL',
     endpoints: ['/api/health', '/api/photos', '/api/auth', '/api/categories']
   });
 });
@@ -288,9 +309,22 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: 'Algo deu errado!' });
 });
 
-// Iniciar servidor
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-  console.log(`JWT Secret configurado:`, !!process.env.JWT_SECRET);
-  console.log(`CORS permitido para:`, allowedOrigins);
-});
+// ✅ MUDANÇA: Inicializar banco antes de iniciar servidor
+const startServer = async () => {
+  try {
+    await initializeDatabase();
+    
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`✅ Servidor rodando na porta ${PORT}`);
+      console.log(`✅ JWT Secret configurado:`, !!process.env.JWT_SECRET);
+      console.log(`✅ Database configurado:`, !!process.env.DATABASE_URL);
+      console.log(`✅ CORS permitido para:`, allowedOrigins);
+    });
+    
+  } catch (err) {
+    console.error('❌ Erro ao iniciar servidor:', err);
+    process.exit(1);
+  }
+};
+
+startServer();
