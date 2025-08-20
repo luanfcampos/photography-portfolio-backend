@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const { router: authRoutes } = require('./routes/auth');
+const { router: authRoutes, authenticateToken } = require('./routes/auth');
 const { initDatabase, getDatabase } = require('./database/init');
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
@@ -9,6 +9,12 @@ const streamifier = require('streamifier');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// ✅ Verificar se JWT_SECRET existe
+if (!process.env.JWT_SECRET) {
+  console.error('❌ ERRO: JWT_SECRET não configurado no .env!');
+  process.exit(1);
+}
 
 // Configuração Cloudinary
 cloudinary.config({
@@ -38,11 +44,24 @@ app.use(express.urlencoded({ extended: true }));
 // Inicializar banco de dados
 initDatabase();
 
-// Configuração Multer (upload em memória)
+// Configuração Multer
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({ 
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB máximo
+  },
+  fileFilter: (req, file, cb) => {
+    // Aceitar apenas imagens
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Apenas arquivos de imagem são permitidos'), false);
+    }
+  }
+});
 
-// ✅ CORRIGIDO - GET /api/photos (buscar fotos do banco)
+// 🔓 PÚBLICO - GET /api/photos (para o portfólio público)
 app.get('/api/photos', (req, res) => {
   const db = getDatabase();
   
@@ -62,30 +81,33 @@ app.get('/api/photos', (req, res) => {
       return res.status(500).json({ error: 'Erro ao buscar fotos' });
     }
     
-    // Transformar filename em URL completa se necessário
     const photos = rows.map(photo => ({
       ...photo,
-      url: photo.filename.startsWith('http') ? photo.filename : photo.filename // Se já for URL do Cloudinary, manter
+      url: photo.filename.startsWith('http') ? photo.filename : photo.filename
     }));
     
     res.json(photos);
   });
 });
 
-// ✅ CORRIGIDO - POST /api/photos (salvar no Cloudinary E no banco)
-app.post('/api/photos', upload.single('photo'), async (req, res) => {
+// 🔐 PROTEGIDO - POST /api/photos (apenas admin pode fazer upload)
+app.post('/api/photos', authenticateToken, upload.single('photo'), async (req, res) => {
   try {
     const file = req.file;
     if (!file) {
       return res.status(400).json({ error: 'Nenhum arquivo enviado' });
     }
 
-    // ✅ 1. Upload para Cloudinary
+    // Upload para Cloudinary
     const cloudinaryResult = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         { 
           folder: 'meu-portfolio',
-          resource_type: 'auto'
+          resource_type: 'auto',
+          transformation: [
+            { width: 1920, height: 1080, crop: 'limit' }, // Redimensionar se muito grande
+            { quality: 'auto' } // Otimizar qualidade
+          ]
         },
         (error, result) => {
           if (error) reject(error);
@@ -95,7 +117,7 @@ app.post('/api/photos', upload.single('photo'), async (req, res) => {
       streamifier.createReadStream(file.buffer).pipe(uploadStream);
     });
 
-    // ✅ 2. Salvar no banco de dados
+    // Salvar no banco
     const db = getDatabase();
     const { title, description, category_id, is_featured } = req.body;
     
@@ -113,7 +135,7 @@ app.post('/api/photos', upload.single('photo'), async (req, res) => {
     const values = [
       title || 'Sem título',
       description || null,
-      cloudinaryResult.secure_url, // URL do Cloudinary
+      cloudinaryResult.secure_url,
       file.originalname,
       category_id || null,
       is_featured === 'true' || is_featured === true ? 1 : 0
@@ -125,7 +147,6 @@ app.post('/api/photos', upload.single('photo'), async (req, res) => {
         return res.status(500).json({ error: 'Erro ao salvar foto no banco' });
       }
       
-      // ✅ Retornar dados da foto criada
       res.json({
         success: true,
         id: this.lastID,
@@ -141,8 +162,8 @@ app.post('/api/photos', upload.single('photo'), async (req, res) => {
   }
 });
 
-// ✅ NOVO - PUT /api/photos/:id (editar foto)
-app.put('/api/photos/:id', (req, res) => {
+// 🔐 PROTEGIDO - PUT /api/photos/:id
+app.put('/api/photos/:id', authenticateToken, (req, res) => {
   const db = getDatabase();
   const { id } = req.params;
   const { title, description, category_id, is_featured } = req.body;
@@ -175,12 +196,11 @@ app.put('/api/photos/:id', (req, res) => {
   });
 });
 
-// ✅ NOVO - DELETE /api/photos/:id (deletar foto)
-app.delete('/api/photos/:id', (req, res) => {
+// 🔐 PROTEGIDO - DELETE /api/photos/:id
+app.delete('/api/photos/:id', authenticateToken, (req, res) => {
   const db = getDatabase();
   const { id } = req.params;
   
-  // Primeiro buscar a foto para pegar a URL do Cloudinary
   db.get('SELECT filename FROM photos WHERE id = ?', [id], async (err, photo) => {
     if (err) {
       console.error('Erro ao buscar foto:', err);
@@ -192,7 +212,7 @@ app.delete('/api/photos/:id', (req, res) => {
     }
     
     try {
-      // Deletar do Cloudinary se for URL do Cloudinary
+      // Deletar do Cloudinary
       if (photo.filename.includes('cloudinary.com')) {
         const publicId = photo.filename.split('/').pop().split('.')[0];
         await cloudinary.uploader.destroy(`meu-portfolio/${publicId}`);
@@ -210,18 +230,18 @@ app.delete('/api/photos/:id', (req, res) => {
       
     } catch (cloudinaryErr) {
       console.error('Erro ao deletar do Cloudinary:', cloudinaryErr);
-      // Mesmo se falhar no Cloudinary, deletar do banco
+      // Deletar do banco mesmo se falhar no Cloudinary
       db.run('DELETE FROM photos WHERE id = ?', [id], function(err) {
         if (err) {
           return res.status(500).json({ error: 'Erro ao deletar foto' });
         }
-        res.json({ success: true, message: 'Foto deletada do banco (erro no Cloudinary)' });
+        res.json({ success: true, message: 'Foto deletada do banco' });
       });
     }
   });
 });
 
-// ✅ NOVO - GET /api/categories (listar categorias)
+// 🔓 PÚBLICO - GET /api/categories
 app.get('/api/categories', (req, res) => {
   const db = getDatabase();
   
@@ -234,7 +254,7 @@ app.get('/api/categories', (req, res) => {
   });
 });
 
-// Rotas existentes
+// Rotas de autenticação
 app.use('/api/auth', authRoutes);
 
 // Rota de teste
@@ -242,11 +262,12 @@ app.get('/api/health', (req, res) => {
   res.json({
     message: 'Backend funcionando!',
     timestamp: new Date().toISOString(),
+    jwt_configured: !!process.env.JWT_SECRET,
     cors: allowedOrigins
   });
 });
 
-// Rota raiz para teste
+// Rota raiz
 app.get('/', (req, res) => {
   res.json({
     message: 'Photography API',
@@ -256,13 +277,20 @@ app.get('/', (req, res) => {
 });
 
 // Middleware de tratamento de erros
-app.use((err, req, res, next) => {
-  console.error(err.stack);
+app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ error: 'Arquivo muito grande (máximo 10MB)' });
+    }
+  }
+  
+  console.error(error.stack);
   res.status(500).json({ error: 'Algo deu errado!' });
 });
 
 // Iniciar servidor
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(`JWT Secret configurado:`, !!process.env.JWT_SECRET);
   console.log(`CORS permitido para:`, allowedOrigins);
 });
