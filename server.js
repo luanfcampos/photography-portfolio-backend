@@ -61,7 +61,7 @@ app.get('/api/health', (req, res) => {
     environment: process.env.NODE_ENV,
     jwt_configured: !!process.env.JWT_SECRET,
     database_configured: !!process.env.DATABASE_URL,
-    cors_origins: allowedOrigins,
+
     cloudinary_configured: !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY)
   });
 });
@@ -338,7 +338,7 @@ const startServer = async () => {
       console.log(`🚀 Servidor rodando na porta ${PORT}`);
       console.log(`🔑 JWT Secret: ${process.env.JWT_SECRET ? '✅ Configurado' : '❌ Não configurado'}`);
       console.log(`🗄️ Database: ${process.env.DATABASE_URL ? '✅ Configurado' : '❌ Não configurado'}`);
-      console.log(`🌍 CORS permitido para: ${allowedOrigins.join(', ')}`);
+      console.log(`🌍 CORS permitido para: * (todas as origens)`);
       console.log(`☁️ Cloudinary: ${process.env.CLOUDINARY_CLOUD_NAME ? '✅ Configurado' : '❌ Não configurado'}`);
     });
     
