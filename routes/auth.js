@@ -1,7 +1,8 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { getDatabase } = require('../database/init');
+// ✅ CORREÇÃO: Usar postgres.js ao invés de init.js
+const { getDatabase } = require('../database/postgres');
 const router = express.Router();
 
 // ✅ Middleware de autenticação JWT real
@@ -15,6 +16,7 @@ const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) {
+      console.error('❌ Erro JWT verify:', err); // DEBUG adicional
       return res.status(403).json({ error: 'Token inválido' });
     }
     req.user = user;
@@ -22,10 +24,11 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// ✅ Login com JWT real + DEBUG
+// ✅ Login com JWT real + DEBUG melhorado
 router.post('/login', async (req, res) => {
   console.log('🔄 Rota /login chamada'); // DEBUG
   console.log('📨 Dados recebidos:', req.body); // DEBUG
+  console.log('🌍 Headers:', req.headers); // DEBUG adicional
   
   try {
     const { username, password } = req.body;
@@ -37,6 +40,7 @@ router.post('/login', async (req, res) => {
     }
 
     console.log('🔐 JWT_SECRET definido:', !!process.env.JWT_SECRET); // DEBUG
+    console.log('🗄️ DATABASE_URL definido:', !!process.env.DATABASE_URL); // DEBUG
 
     // Verificar conexão com banco
     let db;
@@ -51,7 +55,7 @@ router.post('/login', async (req, res) => {
     try {
       console.log('🔍 Buscando usuário:', username); // DEBUG
       
-      // Buscar usuário no banco - PostgreSQL usa $1, $2 para parâmetros
+      // ✅ CORREÇÃO: Usar query async/await do PostgreSQL
       const result = await db.query('SELECT * FROM users WHERE username = $1', [username]);
       console.log('📊 Resultado da consulta:', { rowCount: result.rows.length }); // DEBUG
       
@@ -63,10 +67,11 @@ router.post('/login', async (req, res) => {
       }
 
       console.log('✅ Usuário encontrado, verificando senha...'); // DEBUG
+      console.log('🔑 Hash no banco:', user.password ? 'EXISTS' : 'NULL'); // DEBUG
       
       // Verificar senha
       const validPassword = await bcrypt.compare(password, user.password);
-      console.log('🔑 Senha válida:', validPassword); // DEBUG
+      console.log('🔓 Senha válida:', validPassword); // DEBUG
       
       if (!validPassword) {
         console.log('❌ Senha inválida'); // DEBUG
@@ -105,11 +110,13 @@ router.post('/login', async (req, res) => {
       
     } catch (dbError) {
       console.error('❌ Erro na consulta do banco:', dbError); // DEBUG
+      console.error('❌ Stack do erro:', dbError.stack); // DEBUG adicional
       return res.status(500).json({ error: 'Erro interno do servidor - banco' });
     }
     
   } catch (error) {
     console.error('❌ Erro geral no login:', error); // DEBUG
+    console.error('❌ Stack do erro:', error.stack); // DEBUG adicional
     return res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });
