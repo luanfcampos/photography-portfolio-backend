@@ -3,7 +3,7 @@ const cors = require('cors');
 require('dotenv').config();
 const { router: authRoutes, authenticateToken } = require('./routes/auth');
 // ✅ CORREÇÃO: Usar apenas PostgreSQL
-const { initPostgreSQL, getDatabase } = require('./database/postgres');
+const { initPostgreSQL, getDatabase } = require('./postgres');
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
 const streamifier = require('streamifier');
@@ -71,6 +71,27 @@ const initializeDatabase = async () => {
   try {
     console.log('🔄 Inicializando banco de dados...');
     await initPostgreSQL();
+    
+    // Criar tabela de trabalhos se não existir
+    const db = getDatabase();
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS works (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        cover_photo_id INTEGER,
+        category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_featured BOOLEAN DEFAULT FALSE
+      );
+    `);
+    
+    // Adicionar coluna work_id à tabela photos se não existir
+    await db.query(`
+      ALTER TABLE photos 
+      ADD COLUMN IF NOT EXISTS work_id INTEGER REFERENCES works(id) ON DELETE SET NULL;
+    `);
+    
     console.log('✅ Banco de dados inicializado');
   } catch (err) {
     console.error('❌ Falha ao inicializar banco:', err);
@@ -158,7 +179,7 @@ app.post('/api/photos', authenticateToken, upload.single('photo'), async (req, r
 
     // ✅ CORREÇÃO: Salvar no PostgreSQL
     const db = getDatabase();
-    const { title, description, category_id, is_featured } = req.body;
+    const { title, description, category_id, is_featured, work_id } = req.body;
     
     const insertQuery = `
       INSERT INTO photos (
@@ -168,8 +189,9 @@ app.post('/api/photos', authenticateToken, upload.single('photo'), async (req, r
         original_name, 
         category_id, 
         is_featured,
+        work_id,
         upload_date
-      ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
       RETURNING id
     `;
     
@@ -179,7 +201,8 @@ app.post('/api/photos', authenticateToken, upload.single('photo'), async (req, r
       cloudinaryResult.secure_url,
       file.originalname,
       category_id || null,
-      is_featured === 'true' || is_featured === true
+      is_featured === 'true' || is_featured === true,
+      work_id || null
     ];
     
     const result = await db.query(insertQuery, values);
@@ -207,12 +230,12 @@ app.put('/api/photos/:id', authenticateToken, async (req, res) => {
     console.log(`📝 Atualizando foto ID: ${req.params.id}`);
     const db = getDatabase();
     const { id } = req.params;
-    const { title, description, category_id, is_featured } = req.body;
+    const { title, description, category_id, is_featured, work_id } = req.body;
     
     const updateQuery = `
       UPDATE photos 
-      SET title = $1, description = $2, category_id = $3, is_featured = $4
-      WHERE id = $5
+      SET title = $1, description = $2, category_id = $3, is_featured = $4, work_id = $5
+      WHERE id = $6
     `;
     
     const values = [
@@ -220,6 +243,7 @@ app.put('/api/photos/:id', authenticateToken, async (req, res) => {
       description,
       category_id || null,
       is_featured ? true : false,
+      work_id || null,
       id
     ];
     
@@ -294,6 +318,106 @@ app.get('/api/categories', async (req, res) => {
   } catch (err) {
     console.error('❌ Erro ao buscar categorias:', err);
     res.status(500).json({ error: 'Erro ao buscar categorias' });
+  }
+});
+
+// 🔓 PÚBLICO - GET /api/works
+app.get('/api/works', async (req, res) => {
+  try {
+    console.log('🎨 Buscando trabalhos...');
+    const db = getDatabase();
+    
+    const query = `
+      SELECT 
+        w.*,
+        c.name as category_name,
+        c.slug as category_slug,
+        p.filename as cover_photo_url,
+        (SELECT COUNT(*) FROM photos WHERE work_id = w.id) as photo_count
+      FROM works w
+      LEFT JOIN categories c ON w.category_id = c.id
+      LEFT JOIN photos p ON w.cover_photo_id = p.id
+      ORDER BY w.created_at DESC
+    `;
+    
+    const result = await db.query(query);
+    console.log(`✅ ${result.rows.length} trabalhos encontrados`);
+    res.json(result.rows);
+    
+  } catch (err) {
+    console.error('❌ Erro ao buscar trabalhos:', err);
+    res.status(500).json({ error: 'Erro ao buscar trabalhos' });
+  }
+});
+
+// 🔓 PÚBLICO - GET /api/works/:id/photos
+app.get('/api/works/:id/photos', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`📸 Buscando fotos do trabalho ID: ${id}`);
+    const db = getDatabase();
+    
+    const query = `
+      SELECT 
+        p.*,
+        c.name as category_name,
+        c.slug as category_slug
+      FROM photos p
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.work_id = $1
+      ORDER BY p.upload_date ASC
+    `;
+    
+    const result = await db.query(query, [id]);
+    const photos = result.rows.map(photo => ({
+      ...photo,
+      url: photo.filename?.startsWith('http') ? photo.filename : photo.filename
+    }));
+    
+    console.log(`✅ ${photos.length} fotos encontradas para o trabalho ${id}`);
+    res.json(photos);
+    
+  } catch (err) {
+    console.error('❌ Erro ao buscar fotos do trabalho:', err);
+    res.status(500).json({ error: 'Erro ao buscar fotos do trabalho' });
+  }
+});
+
+// 🔐 PROTEGIDO - POST /api/works
+app.post('/api/works', authenticateToken, async (req, res) => {
+  try {
+    console.log('🎨 Criando novo trabalho...');
+    const db = getDatabase();
+    const { title, description, category_id, is_featured } = req.body;
+    
+    const insertQuery = `
+      INSERT INTO works (title, description, category_id, is_featured, created_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      RETURNING id
+    `;
+    
+    const values = [
+      title || 'Novo Trabalho',
+      description || null,
+      category_id || null,
+      is_featured === 'true' || is_featured === true
+    ];
+    
+    const result = await db.query(insertQuery, values);
+    const newWorkId = result.rows[0].id;
+    
+    console.log(`✅ Trabalho criado com ID: ${newWorkId}`);
+    
+    res.json({
+      success: true,
+      id: newWorkId,
+      title: title,
+      message: 'Trabalho criado com sucesso!'
+    });
+
+  } catch (err) {
+    console.error('❌ Erro ao criar trabalho:', err);
+    res.status(500).json({ error: 'Erro ao criar trabalho: ' + err.message });
   }
 });
 

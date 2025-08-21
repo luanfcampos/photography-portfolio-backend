@@ -98,8 +98,8 @@ const initPostgreSQL = async () => {
     await pool.query(`
       INSERT INTO categories (name, slug, description)
       VALUES
-        ('Retratos', 'retratos', 'Fotografias de retratos profissionais'),
-        ('Paisagens', 'paisagens', 'Fotografias de paisagens naturais'),
+        ('Ensaios', 'ensaios', 'Fotografias de ensaios profissionais'),
+        ('Produtos', 'produtos', 'Fotografias de produtos comerciais'),
         ('Eventos', 'eventos', 'Fotografias de eventos e celebrações')
       ON CONFLICT (slug) DO NOTHING;
     `);
