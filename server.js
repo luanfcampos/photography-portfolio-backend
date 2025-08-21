@@ -3,7 +3,7 @@ const cors = require('cors');
 require('dotenv').config();
 const { router: authRoutes, authenticateToken } = require('./routes/auth');
 // ✅ CORREÇÃO: Usar apenas PostgreSQL
-const { initPostgreSQL, getDatabase } = require('./database/init');
+const { initPostgreSQL, getDatabase } = require('./database/postgres');
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
 const streamifier = require('streamifier');
