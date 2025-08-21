@@ -23,6 +23,8 @@ pool.on('error', (err) => {
 const initPostgreSQL = async () => {
   try {
     console.log('🔄 Inicializando banco PostgreSQL...');
+    console.log('🔍 DATABASE_URL (últimos 10 chars):', process.env.DATABASE_URL?.slice(-10));
+    console.log('🔍 Testando se banco tem dados existentes...');
     console.log('🌍 DATABASE_URL:', process.env.DATABASE_URL ? 'CONFIGURADO' : 'NÃO CONFIGURADO');
     console.log('🔒 SSL Mode:', process.env.NODE_ENV === 'production' ? 'HABILITADO' : 'DESABILITADO');
     
@@ -77,6 +79,8 @@ const initPostgreSQL = async () => {
       'SELECT id, username FROM users WHERE username = $1',
       ['admin']
     );
+    
+    console.log('🔍 Admin users found:', adminExists.rows.length);
     
     if (adminExists.rows.length === 0) {
       const bcrypt = require('bcryptjs');
